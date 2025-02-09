@@ -5,4 +5,4 @@ Made for Blender 4.0
 # Features
 
 * Texture Import
-** Only works with MH1 and MHG
+*  Only works with MH1 and MHG
