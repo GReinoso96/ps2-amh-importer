@@ -8,4 +8,5 @@ Note: this importer is highly experimental and in dire need of a full rewrite.
 
 * Model Import (_amh.bin files)
 * Texture Import
-    * Only works with MH1 and MHG, by supplying a _tex.bin texture file or path to a folder with numbered textures
+    * For MH1 and MHG, you can leave the texture path empty to attempt to autoload from a _tex.bin file.
+    * For MH1, MHG and MH2, you can specify a folder with PNG textures instead.
