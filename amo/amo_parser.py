@@ -22,12 +22,13 @@ class MeshClass:
         self.properties[key].append(value)
 
 class AMOReader:
-    def __init__(self):
+    def __init__(self, img_names):
         self.obj_group = []
         self.mat_group = []
         self.tex_group = []
         self.sub_offsets = []
         self.sub_sizes = []
+        self.image_names = img_names
     
     def read_block(self, file):
         block_pos = file.tell()
@@ -350,182 +351,178 @@ class amo_reader():
                     faces.append([n[i],n[i+2],n[i+1]])
         
         return faces
+    
+    def load_amo(self, file, filename):
+        file.seek(0,2)
+        file_size = file.tell()
+        file.seek(0,0)
 
-    def parse_amo(self, filepath, image_names):
-        overall_name = os.path.basename(filepath)
-        with open(filepath, 'rb') as file:
-            amh_count = NikkiReader.read_uint32(file)
+        amo_header = NikkiReader.read_uint32(file)
+        amo_version = NikkiReader.read_uint32(file)
+        amo_size = NikkiReader.read_uint32(file)
 
-            # Read offsets for amo/fmod and ahi/fskl
-            for n in range(amh_count):
-                self.sub_offsets.append(NikkiReader.read_uint32(file))
-                self.sub_sizes.append(file.tell()+NikkiReader.read_uint32(file))
-                
-            # Assume amo is always first
-            file.seek(self.sub_offsets[0])
-            amo_header = NikkiReader.read_uint32(file)
-            amo_version = NikkiReader.read_uint32(file)
-            amo_size = NikkiReader.read_uint32(file)
+        while(file.tell() < file_size):
+            self.read_block(file)
+        
+        mat_names = self.create_materials(filename,self.mat_group)
+
+        self.create_meshes(filename,mat_names)
+
+    def create_materials(self, filename, material_groups):
+        mat_names = []
+        for idx, amo_mat in enumerate(material_groups):
+            material = bpy.data.materials.new(name=f"{filename} Material {idx}")
+            material.use_nodes = True
+            material.use_backface_culling = False
+            material.blend_method = 'HASHED'
+            material.shadow_method = 'HASHED'
+            material.amh_diffuse = amo_mat.get_property('rgba1')
+            material.amh_ambient = amo_mat.get_property('rgba2')
+            node_tree = material.node_tree
+            nodes = node_tree.nodes
+            links = node_tree.links
+
+            mat_names.append(material.name)
             
-            while(file.tell() < self.sub_sizes[0]):
-                self.read_block(file)
+            for node in nodes:
+                nodes.remove(node)
                 
-            mat_name_list = []
+            output_node = nodes.new(type='ShaderNodeOutputMaterial')
+            output_node.location = (900,0)
+                
+            diffuse_node = nodes.new(type='ShaderNodeBsdfPrincipled')
+            diffuse_node.location = (500,0)
+            diffuse_node.inputs['Roughness'].default_value = 1.0
+            color_emit = amo_mat.get_property('emission')
+            avg_emit = (color_emit[0] + color_emit[1] + color_emit[2]) / 3
+            if avg_emit > 0.6:
+                diffuse_node.inputs[27].default_value = avg_emit
+
+            maprange_node = nodes.new(type='ShaderNodeMapRange')
+            maprange_node.location = (300,-600)
+            maprange_node.inputs[0].default_value = avg_emit
+            maprange_node.inputs[1].default_value = 0
+            maprange_node.inputs[2].default_value = 1
+            maprange_node.inputs[3].default_value = 0 #-1
+            maprange_node.inputs[4].default_value = 1
             
-            # Actual Materials
-            for idx, amo_mat in enumerate(self.mat_group):
-                material = bpy.data.materials.new(name=f"{overall_name} Material {idx}")
-                material.use_nodes = True
-                material.use_backface_culling = False
-                material.blend_method = 'HASHED'
-                material.shadow_method = 'HASHED'
-                material.amh_diffuse = amo_mat.get_property('rgba1')
-                material.amh_ambient = amo_mat.get_property('rgba2')
-                node_tree = material.node_tree
-                nodes = node_tree.nodes
-                links = node_tree.links
-                
-                mat_name_list.append(material.name)
-                
-                for node in nodes:
-                    nodes.remove(node)
-                
-                output_node = nodes.new(type='ShaderNodeOutputMaterial')
-                output_node.location = (900,0)
-                
-                diffuse_node = nodes.new(type='ShaderNodeBsdfPrincipled')
-                diffuse_node.location = (500,0)
-                diffuse_node.inputs['Roughness'].default_value = 1.0
-                color_emit = amo_mat.get_property('emission')
-                avg_emit = (color_emit[0] + color_emit[1] + color_emit[2]) / 3
-                if avg_emit > 0.6:
-                    diffuse_node.inputs[27].default_value = avg_emit
-
-                maprange_node = nodes.new(type='ShaderNodeMapRange')
-                maprange_node.location = (300,-600)
-                maprange_node.inputs[0].default_value = avg_emit
-                maprange_node.inputs[1].default_value = 0
-                maprange_node.inputs[2].default_value = 1
-                maprange_node.inputs[3].default_value = -1
-                maprange_node.inputs[4].default_value = 1
-                
-                mat_texture = self.tex_group[amo_mat.get_property('texture')].get_property('tex_id')
-                texture_node = nodes.new(type='ShaderNodeTexImage')
-                texture_node.location = (0,0)
-                if image_names:
-                    texture = bpy.data.images.get(image_names[mat_texture])
-                    texture_node.image = texture
-                
-                vertcol_node = nodes.new(type='ShaderNodeVertexColor')
-                vertcol_node.location = (0,-300)
-                vertcol_node.layer_name = "ColRGBA"
-
-                mix_node = nodes.new(type='ShaderNodeMix')
-                mix_node.location = (300,0)
-                mix_node.data_type = 'RGBA'
-                mix_node.blend_type = 'MULTIPLY'
-                mix_node.inputs['Factor'].default_value = 1.0
-
-                rgba1_node = nodes.new(type='ShaderNodeCombineColor')
-                rgba1_node.location = (0,-600)
-                rgba1_node.inputs[0].default_value = amo_mat.get_property('rgba1')[0]
-                rgba1_node.inputs[1].default_value = amo_mat.get_property('rgba1')[1]
-                rgba1_node.inputs[2].default_value = amo_mat.get_property('rgba1')[2]
-
-                rgba2_node = nodes.new(type='ShaderNodeCombineColor')
-                rgba2_node.location = (0,-800)
-                rgba2_node.inputs[0].default_value = amo_mat.get_property('rgba2')[0]
-                rgba2_node.inputs[1].default_value = amo_mat.get_property('rgba2')[1]
-                rgba2_node.inputs[2].default_value = amo_mat.get_property('rgba2')[2]
-                
-                alphamix_node = nodes.new(type='ShaderNodeMath')
-                alphamix_node.location = (300,-300)
-                alphamix_node.operation = 'MULTIPLY'
-                
-                links.new(texture_node.outputs['Color'],mix_node.inputs['A'])
-                links.new(vertcol_node.outputs['Color'],mix_node.inputs['B'])
-                links.new(mix_node.outputs['Result'],diffuse_node.inputs[0])
-                links.new(mix_node.outputs['Result'],diffuse_node.inputs[26])
-                links.new(vertcol_node.outputs['Alpha'],alphamix_node.inputs[0])
-                links.new(texture_node.outputs['Alpha'],alphamix_node.inputs[1])
-                links.new(alphamix_node.outputs[0],diffuse_node.inputs[4])
-                links.new(maprange_node.outputs[0],diffuse_node.inputs[27])
-                links.new(diffuse_node.outputs['BSDF'],output_node.inputs['Surface'])
-                
-                #mesh.materials.append(material)
-
-            for amo_obj in self.obj_group:
-                all_strips = amo_obj.get_property('strips') + amo_obj.get_property('strips2')
-                faces = self.parse_tristrip(all_strips)
-                
-                mesh = bpy.data.meshes.new(amo_obj.name)
-                obj = bpy.data.objects.new(f"{overall_name} {amo_obj.name}", mesh)
-                col = bpy.data.collections[0]
-                
-                col.objects.link(obj)
-                bpy.context.view_layer.objects.active = obj
-                    
-                mesh.from_pydata(amo_obj.get_property('vert_buffer'), [], faces)
-
-                # Adapted from *&'s plugin
-                mesh.polygons.foreach_set("use_smooth", [True] * len(mesh.polygons))
-                mesh.normals_split_custom_set_from_vertices(amo_obj.get_property('vert_normals'))
-                mesh.use_auto_smooth = True  
+            mat_texture = self.tex_group[amo_mat.get_property('texture')].get_property('tex_id')
+            texture_node = nodes.new(type='ShaderNodeTexImage')
+            texture_node.location = (0,0)
+            if self.image_names:
+                texture = bpy.data.images.get(self.image_names[mat_texture])
+                texture_node.image = texture
             
-                # UVs
-                if not mesh.uv_layers:
-                    uv_layer = mesh.uv_layers.new(name="UVMap")
-                else:
-                    uv_layer = mesh.uv_layers.active
-                for face in mesh.polygons:
-                    for vert_idx, loop_idx in zip(face.vertices, face.loop_indices):
-                        uv_layer.data[loop_idx].uv = amo_obj.get_property('vert_uvs')[vert_idx]
-                
-                # Vertex Colors
-                if not mesh.vertex_colors:
-                    vert_col = mesh.vertex_colors.new(name="ColRGBA")
-                else:
-                    vert_col = mesh.vertex_colors.active
-                for face in mesh.polygons:
-                    for vert_idx, loop_idx in zip(face.vertices, face.loop_indices):
-                        vert_col.data[loop_idx].color = amo_obj.get_property('vert_cols')[vert_idx]
+            vertcol_node = nodes.new(type='ShaderNodeVertexColor')
+            vertcol_node.location = (0,-300)
+            vertcol_node.layer_name = "ColRGBA"
+
+            mix_node = nodes.new(type='ShaderNodeMix')
+            mix_node.location = (300,0)
+            mix_node.data_type = 'RGBA'
+            mix_node.blend_type = 'MULTIPLY'
+            mix_node.inputs['Factor'].default_value = 1.0
+
+            rgba1_node = nodes.new(type='ShaderNodeCombineColor')
+            rgba1_node.location = (0,-600)
+            rgba1_node.inputs[0].default_value = amo_mat.get_property('rgba1')[0]
+            rgba1_node.inputs[1].default_value = amo_mat.get_property('rgba1')[1]
+            rgba1_node.inputs[2].default_value = amo_mat.get_property('rgba1')[2]
+
+            rgba2_node = nodes.new(type='ShaderNodeCombineColor')
+            rgba2_node.location = (0,-800)
+            rgba2_node.inputs[0].default_value = amo_mat.get_property('rgba2')[0]
+            rgba2_node.inputs[1].default_value = amo_mat.get_property('rgba2')[1]
+            rgba2_node.inputs[2].default_value = amo_mat.get_property('rgba2')[2]
             
-                # Weights Vertex Groups
+            alphamix_node = nodes.new(type='ShaderNodeMath')
+            alphamix_node.location = (300,-300)
+            alphamix_node.operation = 'MULTIPLY'
+            
+            links.new(texture_node.outputs['Color'],mix_node.inputs['A'])
+            links.new(vertcol_node.outputs['Color'],mix_node.inputs['B'])
+            links.new(mix_node.outputs['Result'],diffuse_node.inputs[0])
+            links.new(mix_node.outputs['Result'],diffuse_node.inputs[26])
+            links.new(vertcol_node.outputs['Alpha'],alphamix_node.inputs[0])
+            links.new(texture_node.outputs['Alpha'],alphamix_node.inputs[1])
+            links.new(alphamix_node.outputs[0],diffuse_node.inputs[4])
+            links.new(maprange_node.outputs[0],diffuse_node.inputs[27])
+            links.new(diffuse_node.outputs['BSDF'],output_node.inputs['Surface'])
+        return mat_names
+    
+    def create_meshes(self, filename, materials):
+        for amo_obj in self.obj_group:
+            all_strips = amo_obj.get_property('strips') + amo_obj.get_property('strips2')
+            faces = self.parse_tristrip(all_strips)
+            
+            mesh = bpy.data.meshes.new(amo_obj.name)
+            obj = bpy.data.objects.new(f"{filename} {amo_obj.name}", mesh)
+            col = bpy.data.collections[0]
+            
+            col.objects.link(obj)
+            bpy.context.view_layer.objects.active = obj
                 
-                for idx, weightset in enumerate(amo_obj.get_property('vert_weights')):
-                    for weight in weightset:
-                        bone_name = f"Bone.{str(weight[0]).zfill(3)}"
-                        if bone_name not in obj.vertex_groups:
-                            vertexw_group = obj.vertex_groups.new(name=bone_name)
-                        #print(f"{[idx]} {weight[0]} {weight[1]}")
-                        vertexw_group.add([idx],weight[1],'ADD')
+            mesh.from_pydata(amo_obj.get_property('vert_buffer'), [], faces)
+
+            # Adapted from *&'s plugin
+            mesh.polygons.foreach_set("use_smooth", [True] * len(mesh.polygons))
+            mesh.normals_split_custom_set_from_vertices(amo_obj.get_property('vert_normals'))
+            mesh.use_auto_smooth = True  
+        
+            # UVs
+            if not mesh.uv_layers:
+                uv_layer = mesh.uv_layers.new(name="UVMap")
+            else:
+                uv_layer = mesh.uv_layers.active
+            for face in mesh.polygons:
+                for vert_idx, loop_idx in zip(face.vertices, face.loop_indices):
+                    uv_layer.data[loop_idx].uv = amo_obj.get_property('vert_uvs')[vert_idx]
+            
+            # Vertex Colors
+            if not mesh.vertex_colors:
+                vert_col = mesh.vertex_colors.new(name="ColRGBA")
+            else:
+                vert_col = mesh.vertex_colors.active
+            for face in mesh.polygons:
+                for vert_idx, loop_idx in zip(face.vertices, face.loop_indices):
+                    vert_col.data[loop_idx].color = amo_obj.get_property('vert_cols')[vert_idx]
+        
+            # Weights Vertex Groups
+            
+            for idx, weightset in enumerate(amo_obj.get_property('vert_weights')):
+                for weight in weightset:
+                    bone_name = f"Bone.{str(weight[0]).zfill(3)}"
+                    if bone_name not in obj.vertex_groups:
+                        vertexw_group = obj.vertex_groups.new(name=bone_name)
+                    #print(f"{[idx]} {weight[0]} {weight[1]}")
+                    vertexw_group.add([idx],weight[1],'ADD')
+            
+            # Tri-Strip Vertex Groups
+            for idx, strip in enumerate(all_strips):
+                strip_name = f"Strip.{str(idx).zfill(3)}"
+                if strip_name not in obj.vertex_groups:
+                    vertex_group = obj.vertex_groups.new(name=strip_name)
+                    weight = 1/len(strip)
+                    for vert in strip:
+                        vertex_group.add([vert], weight, 'REPLACE')
+            
+            for mat_id in amo_obj.get_property('mat_remaps'):
+                mat_name = materials[mat_id]
+                mat_ref = bpy.data.materials.get(mat_name)
                 
-                # Tri-Strip Vertex Groups
-                for idx, strip in enumerate(all_strips):
-                    strip_name = f"Strip.{str(idx).zfill(3)}"
-                    if strip_name not in obj.vertex_groups:
-                        vertex_group = obj.vertex_groups.new(name=strip_name)
-                        weight = 1/len(strip)
-                        for vert in strip:
-                            vertex_group.add([vert], weight, 'REPLACE')
+                if mat_name not in obj.data.materials:
+                    obj.data.materials.append(mat_ref)
+            
+            for idx, mat_id in enumerate(amo_obj.get_property('mat_buffer')):
+                strip_name = f"Strip.{str(idx).zfill(3)}"
+                vert_group = obj.vertex_groups.get(strip_name)
                 
-                for mat_id in amo_obj.get_property('mat_remaps'):
-                    mat_name = mat_name_list[mat_id]
-                    mat_ref = bpy.data.materials.get(mat_name)
-                    
-                    if mat_name not in obj.data.materials:
-                        obj.data.materials.append(mat_ref)
+                group_index = vert_group.index
+                group_verts = [v.index for v in obj.data.vertices if group_index in [g.group for g in v.groups]]
                 
-                for idx, mat_id in enumerate(amo_obj.get_property('mat_buffer')):
-                    strip_name = f"Strip.{str(idx).zfill(3)}"
-                    vert_group = obj.vertex_groups.get(strip_name)
-                    
-                    group_index = vert_group.index
-                    group_verts = [v.index for v in obj.data.vertices if group_index in [g.group for g in v.groups]]
-                    
-                    for poly in obj.data.polygons:
-                        if any(v in group_verts for v in poly.vertices):
-                            poly.select = True
-                            poly.material_index = mat_id
-                        else:
-                            poly.select = False
+                for poly in obj.data.polygons:
+                    if any(v in group_verts for v in poly.vertices):
+                        poly.select = True
+                        poly.material_index = mat_id
+                    else:
+                        poly.select = False

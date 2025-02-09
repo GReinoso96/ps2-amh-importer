@@ -4,13 +4,6 @@ import numpy as np
 
 from ..helpers.nikkireader import NikkiReader
 
-def create_subfile(file,ptr,size):
-    file.seek(ptr)
-    
-    subfile_data = file.read(size)
-    
-    return io.BytesIO(subfile_data)
-
 def pal_rgba32(apx):
     if NikkiReader._big_endian:
         c_a = NikkiReader.read_byte(apx) / 255.0
@@ -117,7 +110,7 @@ def parse_tex(filepath):
             file_meta.append([ptr,size])
         
         for idx, subfile in enumerate(file_meta):
-            apx = create_subfile(file, subfile[0], subfile[1])
+            apx = NikkiReader.create_subfile(file, subfile[0], subfile[1])
             apx_size = NikkiReader.read_uint32(apx)
             image = apx_decode(apx, idx)
             images.append(image.name)

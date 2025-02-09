@@ -1,4 +1,4 @@
-import struct
+import struct, io
 
 class NikkiReader:
     _big_endian = False
@@ -44,3 +44,9 @@ class NikkiReader:
     @classmethod
     def read_vec4(cls, file):
         return struct.unpack(cls._get_format('4f'), file.read(16))
+    
+    @classmethod
+    def create_subfile(cls,file,ptr,size):
+        file.seek(ptr)
+        subfile_data = file.read(size)
+        return io.BytesIO(subfile_data)
