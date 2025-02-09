@@ -8,4 +8,4 @@ Note: this importer is highly experimental and in dire need of a full rewrite.
 
 * Model Import (_amh.bin files)
 * Texture Import
- * Only works with MH1 and MHG, by supplying a _tex.bin texture file or path to a folder with numbered textures
+    * Only works with MH1 and MHG, by supplying a _tex.bin texture file or path to a folder with numbered textures
