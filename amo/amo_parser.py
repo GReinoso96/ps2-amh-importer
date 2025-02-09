@@ -403,7 +403,7 @@ class amo_reader():
             maprange_node.inputs[0].default_value = avg_emit
             maprange_node.inputs[1].default_value = 0
             maprange_node.inputs[2].default_value = 1
-            maprange_node.inputs[3].default_value = 0 #-1
+            maprange_node.inputs[3].default_value = -1
             maprange_node.inputs[4].default_value = 1
             
             mat_texture = self.tex_group[amo_mat.get_property('texture')].get_property('tex_id')
