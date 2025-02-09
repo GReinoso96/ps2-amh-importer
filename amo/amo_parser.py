@@ -3,22 +3,180 @@ import struct
 import array
 import os
 
-from ..helpers.nikkireader import big_endian, read_uint16, read_float, read_uint32, read_vec2, read_vec3, read_vec4
+from ..helpers.nikkireader import NikkiReader
 
-class meshClass:
-    def __init__(self, name, **properties):
+class MeshClass:
+    def __init__(self, name: str, **properties):
         self.name = name
         self.properties = properties
-
-    def get_property(self, key, default=[]):
-        return self.properties.get(key, default)
-
+    
+    def get_property(self, key, default=None):
+        return self.properties.get(key, default if default is not None else [])
+    
     def set_property(self, key, value):
         self.properties[key] = value
-        
-    def append_property(self, key, value):
-        self.properties[key] = self.properties[key].append(value)
 
+    def append_property(self, key, value):
+        if key not in self.properties:
+            self.properties[key] = []
+        self.properties[key].append(value)
+
+class AMOReader:
+    def __init__(self):
+        self.obj_group = []
+        self.mat_group = []
+        self.tex_group = []
+        self.sub_offsets = []
+        self.sub_sizes = []
+    
+    def read_block(self, file):
+        block_pos = file.tell()
+        block_id = NikkiReader.read_uint32(file)
+        block_count = NikkiReader.read_uint32(file)
+        block_size = NikkiReader.read_uint32(file)
+
+        block_names = {
+            0x20000: 'Header',
+            0x2: 'Main',
+            0x4: 'Object',
+            0x5: 'Face',
+            0x030000: 'Face Sub1',
+            0x040000: 'Face Sub2',
+            0x050000: 'Material Remap',
+            0x060000: 'Material Index',
+            0x070000: 'Vertex Buffer',
+            0x080000: 'Vertex Normals',
+            0x0A0000: 'Vertex UVs',
+            0x0B0000: 'Vertex Colors',
+            0x0C0000: 'Vertex Weights',
+            0x9: 'Materials',
+            0xA: 'Textures'
+        }
+
+        print(f"{block_names.get(block_id, 'Unknown')} | {block_pos:8X} | {block_id:8X} | {block_count:8X} | {block_size:8X}")
+
+        block_handlers = {
+            0x20000: self.handle_header_block,
+            0x2: self.handle_main_block,
+            0x4: self.handle_object_block,
+            0x5: self.handle_face_block,
+            0x030000: self.handle_face_sub_block,
+            0x040000: self.handle_face_sub_block2,
+            0x050000: self.handle_material_remap_block,
+            0x060000: self.handle_material_index_block,
+            0x070000: self.handle_vertex_buffer_block,
+            0x080000: self.handle_vertex_normals_block,
+            0x0A0000: self.handle_vertex_uvs_block,
+            0x0B0000: self.handle_vertex_colors_block,
+            0x0C0000: self.handle_vertex_weights_block,
+            0x9: self.handle_material_data_block,
+            0xA: self.handle_texture_data_block
+        }
+
+        handler = block_handlers.get(block_id, self.handle_unknown_block)
+        handler(file, block_count, block_size)
+    
+    def handle_header_block(self, file, count, size):
+        NikkiReader.read_uint32(file) # Unknown Numbers
+        for _ in range(count):
+            self.read_block(file)
+    
+    def handle_main_block(self, file, count, size):
+        for n in range(count):
+            self.obj_group.append(MeshClass(name=f"Mesh-{n}"))
+            self.read_block(file)
+    
+    def handle_object_block(self, file, count, size):
+        for _ in range(count):
+            self.read_block(file)
+    
+    def handle_face_block(self, file, count, size):
+        for _ in range(count):
+            self.read_block(file)
+    
+    def handle_face_sub_block(self, file, count, size):
+        self._parse_face_sub_block(file, count, size, 'strips')
+    
+    def handle_face_sub_block2(self, file, count, size):
+        self._parse_face_sub_block(file, count, size, 'strips2')
+    
+    def _parse_face_sub_block(self, file, count, size, property_name):
+        max_pos = (file.tell() + size) - 12
+        strips = []
+        for _ in range(count):
+            if file.tell() < max_pos:
+                val1 = NikkiReader.read_uint16(file)
+                val2 = NikkiReader.read_uint16(file)
+                face_count = val2 if NikkiReader._big_endian else val1
+                vertices = [NikkiReader.read_uint32(file) for _ in range(face_count) if file.tell() < max_pos]
+                strips.append(vertices)
+        
+        self.obj_group[-1].set_property(property_name, strips)
+    
+    def handle_material_remap_block(self, file, count, size):
+        self.obj_group[-1].set_property('mat_remaps', [NikkiReader.read_uint32(file) for _ in range(count)])
+    
+    def handle_material_index_block(self, file, count, size):
+        self.obj_group[-1].set_property('mat_buffer', [NikkiReader.read_uint32(file) for _ in range(count)])
+    
+    def handle_vertex_buffer_block(self, file, count, size):
+        self.obj_group[-1].set_property('vert_buffer', [NikkiReader.read_vec3(file) for _ in range(count)])
+    
+    def handle_vertex_normals_block(self, file, count, size):
+        self.obj_group[-1].set_property('vert_normals', [NikkiReader.read_vec3(file) for _ in range(count)])
+    
+    def handle_vertex_uvs_block(self, file, count, size):
+        vert_uvs = []
+        for _ in range(count):
+            x = NikkiReader.read_float(file)
+            y = NikkiReader.read_float(file) * -1
+            vert_uvs.append([x,y])
+        self.obj_group[-1].set_property('vert_uvs', vert_uvs)
+    
+    def handle_vertex_colors_block(self, file, count, size):
+        self.obj_group[-1].set_property('vert_cols', [NikkiReader.read_vec4(file) for _ in range(count)])
+    
+    def handle_vertex_weights_block(self, file, count, size):
+        vert_weights = []
+
+        for _ in range(count):
+            pair_count = NikkiReader.read_uint32(file)
+            weight_pairs = [[NikkiReader.read_uint32(file), NikkiReader.read_float(file) / 100] for _ in range(pair_count)]
+            vert_weights.append(weight_pairs)
+        
+        self.obj_group[-1].set_property('vert_weights', vert_weights)
+
+    def handle_material_data_block(self, file, count, size):
+        for n in range(count):
+            mat = MeshClass(name="AMO Material {n}")
+            mat.set_property('unk1', NikkiReader.read_uint32(file))
+            mat.set_property('unk2', NikkiReader.read_uint32(file))
+            mat.set_property('unk3', NikkiReader.read_uint32(file))
+            mat.set_property('emission', NikkiReader.read_vec4(file))
+            mat.set_property('rgba1', NikkiReader.read_vec4(file))
+            mat.set_property('rgba2', NikkiReader.read_vec4(file))
+            mat.set_property('unk4', NikkiReader.read_float(file))
+            mat.set_property('unk5', NikkiReader.read_uint32(file))
+            mat.set_property('unkChunk', file.read(200))
+            mat.set_property('texture', NikkiReader.read_uint32(file))
+            self.mat_group.append(mat)
+    
+    def handle_texture_data_block(self, file, count, size):
+        for n in range(count):
+            tex = MeshClass(name=f"AMO Texture {n}")
+            tex.set_property('tex_type', NikkiReader.read_uint32(file))
+            tex.set_property('tex_count', NikkiReader.read_uint32(file))
+            tex.set_property('tex_size', NikkiReader.read_uint32(file))
+            tex.set_property('tex_id', NikkiReader.read_uint32(file))
+            tex.set_property('tex_width', NikkiReader.read_uint32(file))
+            tex.set_property('tex_height', NikkiReader.read_uint32(file))
+            tex.set_property('unkChunk', file.read(244))
+            self.tex_group.append(tex)
+
+    def handle_unknown_block(self, file, count, size):
+        print("Unknown Block encountered. Skipping...")
+        file.seek(size - 12, 1)
+        '''
 class amo_reader():
     obj_group = []
     mat_group = []
@@ -29,14 +187,14 @@ class amo_reader():
 
     def read_block(self, file):
         block_pos = file.tell()
-        block_id = read_uint32(file)
-        block_count = read_uint32(file)
-        block_size = read_uint32(file)
+        block_id = NikkiReader.read_uint32(file)
+        block_count = NikkiReader.read_uint32(file)
+        block_size = NikkiReader.read_uint32(file)
         match block_id:
             case 0x20000:
                 print(f"Header Block")
                 print(f"{block_pos:8X} | {block_id:8X} | {block_count:8X} | {block_size:8X}")
-                unk = read_uint32(file)
+                unk = NikkiReader.read_uint32(file)
                 for n in range(block_count):
                     self.read_block(file)
             case 0x2:
@@ -63,16 +221,16 @@ class amo_reader():
                 strips = []
                 for n in range(block_count):
                     if file.tell() < max_pos:
-                        if big_endian == True:
-                            unk_val = read_uint16(file)
-                            face_count = read_uint16(file)
+                        if NikkiReader._big_endian:
+                            unk_val = NikkiReader.read_uint16(file)
+                            face_count = NikkiReader.read_uint16(file)
                         else:
-                            face_count = read_uint16(file)
-                            unk_val = read_uint16(file)
+                            face_count = NikkiReader.read_uint16(file)
+                            unk_val = NikkiReader.read_uint16(file)
                         vertices = []
                         for i in range(face_count):
                             if file.tell() < max_pos:
-                                vertices.append(read_uint32(file))
+                                vertices.append(NikkiReader.read_uint32(file))
                         strips.append(vertices)
                 self.obj_group[-1].set_property('strips',strips)
             case 0x040000:
@@ -82,15 +240,15 @@ class amo_reader():
                 strips = []
                 for n in range(block_count):
                     if file.tell() < max_pos:
-                        if big_endian == True:
-                            unk_val = read_uint16(file)
-                            face_count = read_uint16(file)
+                        if NikkiReader._big_endian == True:
+                            unk_val = NikkiReader.read_uint16(file)
+                            face_count = NikkiReader.read_uint16(file)
                         else:
-                            face_count = read_uint16(file)
-                            unk_val = read_uint16(file)
+                            face_count = NikkiReader.read_uint16(file)
+                            unk_val = NikkiReader.read_uint16(file)
                         vertices = []
                         for i in range(face_count):
-                            vertices.append(read_uint32(file))
+                            vertices.append(NikkiReader.read_uint32(file))
                         strips.append(vertices)
                 self.obj_group[-1].set_property('strips2',strips)
             case 0x050000: # Unknown
@@ -98,53 +256,53 @@ class amo_reader():
                 print(f"{block_pos:8X} | {block_id:8X} | {block_count:8X} | {block_size:8X}")
                 remaps = []
                 for n in range(block_count):
-                    remaps.append(read_uint32(file))
+                    remaps.append(NikkiReader.read_uint32(file))
                 self.obj_group[-1].set_property('mat_remaps',remaps)
             case 0x060000: # Unknown
                 print("Material Index Buffer Block")
                 print(f"{block_pos:8X} | {block_id:8X} | {block_count:8X} | {block_size:8X}")
                 mat_buffer = []
                 for n in range(block_count):
-                    mat_buffer.append(read_uint32(file))
+                    mat_buffer.append(NikkiReader.read_uint32(file))
                 self.obj_group[-1].set_property('mat_buffer',mat_buffer)
             case 0x070000:
                 print("Vertex Buffer Block")
                 print(f"{block_pos:8X} | {block_id:8X} | {block_count:8X} | {block_size:8X}")
                 vert_buffer = []
                 for n in range(block_count):
-                    vert_buffer.append(read_vec3(file))
+                    vert_buffer.append(NikkiReader.read_vec3(file))
                 self.obj_group[-1].set_property('vert_buffer',vert_buffer)
             case 0x080000:
                 print("Vertex Normals Block")
                 print(f"{block_pos:8X} | {block_id:8X} | {block_count:8X} | {block_size:8X}")
                 vert_normals = []
                 for n in range(block_count):
-                    vert_normals.append(read_vec3(file))
+                    vert_normals.append(NikkiReader.read_vec3(file))
                 self.obj_group[-1].set_property('vert_normals',vert_normals)
             case 0x0A0000:
                 print("Vertex UVs Block")
                 print(f"{block_pos:8X} | {block_id:8X} | {block_count:8X} | {block_size:8X}")
                 vert_uvs = []
                 for n in range(block_count):
-                    vert_uvs.append(read_vec2(file))
+                    vert_uvs.append(NikkiReader.read_vec2(file))
                 self.obj_group[-1].set_property('vert_uvs',vert_uvs)
             case 0x0B0000:
                 print("Vertex Colors Block")
                 print(f"{block_pos:8X} | {block_id:8X} | {block_count:8X} | {block_size:8X}")
                 vert_cols = []
                 for n in range(block_count):
-                    vert_cols.append(read_vec4(file))
+                    vert_cols.append(NikkiReader.read_vec4(file))
                 self.obj_group[-1].set_property('vert_cols',vert_cols)
             case 0x0C0000:
                 print("Vertex Weights Block")
                 print(f"{block_pos:8X} | {block_id:8X} | {block_count:8X} | {block_size:8X}")
                 vert_weights = []
                 for n in range(block_count):
-                    pair_count = read_uint32(file)
+                    pair_count = NikkiReader.read_uint32(file)
                     weight_pair = []
                     for i in range(pair_count):
-                        wt_bone = read_uint32(file)
-                        wt_factor = read_float(file) # Game uses range 0.0 - 100.0
+                        wt_bone = NikkiReader.read_uint32(file)
+                        wt_factor = NikkiReader.read_float(file) # Game uses range 0.0 - 100.0
                         weight_pair.append([wt_bone, wt_factor/100])
                     vert_weights.append(weight_pair)
                 self.obj_group[-1].set_property('vert_weights',vert_weights)
@@ -153,34 +311,34 @@ class amo_reader():
                 print(f"{block_pos:8X} | {block_id:8X} | {block_count:8X} | {block_size:8X}")
                 for n in range(block_count):
                     self.mat_group.append(meshClass(name=f"AMO Material {n}"))
-                    self.mat_group[-1].set_property('unk1',read_uint32(file))
-                    self.mat_group[-1].set_property('unk2',read_uint32(file))
-                    self.mat_group[-1].set_property('unk3',read_uint32(file))
-                    self.mat_group[-1].set_property('emission',read_vec4(file))
-                    self.mat_group[-1].set_property('rgba1',read_vec4(file))
-                    self.mat_group[-1].set_property('rgba2',read_vec4(file))
-                    self.mat_group[-1].set_property('unk4',read_float(file))
-                    self.mat_group[-1].set_property('unk5',read_uint32(file))
+                    self.mat_group[-1].set_property('unk1',NikkiReader.read_uint32(file))
+                    self.mat_group[-1].set_property('unk2',NikkiReader.read_uint32(file))
+                    self.mat_group[-1].set_property('unk3',NikkiReader.read_uint32(file))
+                    self.mat_group[-1].set_property('emission',NikkiReader.read_vec4(file))
+                    self.mat_group[-1].set_property('rgba1',NikkiReader.read_vec4(file))
+                    self.mat_group[-1].set_property('rgba2',NikkiReader.read_vec4(file))
+                    self.mat_group[-1].set_property('unk4',NikkiReader.read_float(file))
+                    self.mat_group[-1].set_property('unk5',NikkiReader.read_uint32(file))
                     self.mat_group[-1].set_property('unkChunk',file.read(200))
-                    self.mat_group[-1].set_property('texture',read_uint32(file))
+                    self.mat_group[-1].set_property('texture',NikkiReader.read_uint32(file))
             case 0xA:
                 print("Texture Data Block")
                 print(f"{block_pos:8X} | {block_id:8X} | {block_count:8X} | {block_size:8X}")
                 for n in range(block_count):
                     self.tex_group.append(meshClass(name=f"AMO Texture {n}"))
-                    self.tex_group[-1].set_property('tex_type',read_uint32(file))
-                    self.tex_group[-1].set_property('tex_count',read_uint32(file))
-                    self.tex_group[-1].set_property('tex_size',read_uint32(file))
-                    self.tex_group[-1].set_property('tex_id',read_uint32(file))
-                    self.tex_group[-1].set_property('tex_width',read_uint32(file))
-                    self.tex_group[-1].set_property('tex_height',read_uint32(file))
+                    self.tex_group[-1].set_property('tex_type',NikkiReader.read_uint32(file))
+                    self.tex_group[-1].set_property('tex_count',NikkiReader.read_uint32(file))
+                    self.tex_group[-1].set_property('tex_size',NikkiReader.read_uint32(file))
+                    self.tex_group[-1].set_property('tex_id',NikkiReader.read_uint32(file))
+                    self.tex_group[-1].set_property('tex_width',NikkiReader.read_uint32(file))
+                    self.tex_group[-1].set_property('tex_height',NikkiReader.read_uint32(file))
                     self.tex_group[-1].set_property('unkChunk',file.read(244))
             case _:
                 print("Unknown Block")
                 print(f"{block_pos:8X} | {block_id:8X} | {block_count:8X} | {block_size:8X}")
                 file.seek(block_size-12,1)
         return
-
+    '''
     def parse_tristrip(self,tri_strip):
         faces = []
         
@@ -194,31 +352,20 @@ class amo_reader():
         return faces
 
     def parse_amo(self, filepath, image_names):
-        self.obj_group.clear()
-        self.mat_group.clear()
-        self.tex_group.clear()
-
-        self.sub_offsets.clear()
-        self.sub_sizes.clear()
         overall_name = os.path.basename(filepath)
         with open(filepath, 'rb') as file:
-            amh_count = read_uint32(file)
-            '''
-            if amh_count >= 16777216:
-                big_endian = True
-                file.seek(0)
-                amh_count = read_uint32(file)
-            '''
+            amh_count = NikkiReader.read_uint32(file)
+
             # Read offsets for amo/fmod and ahi/fskl
             for n in range(amh_count):
-                self.sub_offsets.append(read_uint32(file))
-                self.sub_sizes.append(file.tell()+read_uint32(file))
+                self.sub_offsets.append(NikkiReader.read_uint32(file))
+                self.sub_sizes.append(file.tell()+NikkiReader.read_uint32(file))
                 
             # Assume amo is always first
             file.seek(self.sub_offsets[0])
-            amo_header = read_uint32(file)
-            amo_version = read_uint32(file)
-            amo_size = read_uint32(file)
+            amo_header = NikkiReader.read_uint32(file)
+            amo_version = NikkiReader.read_uint32(file)
+            amo_size = NikkiReader.read_uint32(file)
             
             while(file.tell() < self.sub_sizes[0]):
                 self.read_block(file)
@@ -230,8 +377,10 @@ class amo_reader():
                 material = bpy.data.materials.new(name=f"{overall_name} Material {idx}")
                 material.use_nodes = True
                 material.use_backface_culling = False
-                material.blend_method = 'CLIP'
-                material.shadow_method = 'CLIP'
+                material.blend_method = 'HASHED'
+                material.shadow_method = 'HASHED'
+                material.amh_diffuse = amo_mat.get_property('rgba1')
+                material.amh_ambient = amo_mat.get_property('rgba2')
                 node_tree = material.node_tree
                 nodes = node_tree.nodes
                 links = node_tree.links

@@ -2,7 +2,7 @@ import bpy
 import io
 import numpy as np
 
-from ..helpers.nikkireader import big_endian, read_byte, read_uint16, read_uint4, read_uint32
+from ..helpers.nikkireader import NikkiReader
 
 def create_subfile(file,ptr,size):
     file.seek(ptr)
@@ -12,46 +12,46 @@ def create_subfile(file,ptr,size):
     return io.BytesIO(subfile_data)
 
 def pal_rgba32(apx):
-    if big_endian == True:
-        c_a = read_byte(apx) / 255.0
-        c_b = read_byte(apx) / 255.0
-        c_g = read_byte(apx) / 255.0
-        c_r = read_byte(apx) / 255.0
+    if NikkiReader._big_endian:
+        c_a = NikkiReader.read_byte(apx) / 255.0
+        c_b = NikkiReader.read_byte(apx) / 255.0
+        c_g = NikkiReader.read_byte(apx) / 255.0
+        c_r = NikkiReader.read_byte(apx) / 255.0
     else:
-        c_r = read_byte(apx) / 255.0
-        c_g = read_byte(apx) / 255.0
-        c_b = read_byte(apx) / 255.0
-        c_a = read_byte(apx) / 255.0
+        c_r = NikkiReader.read_byte(apx) / 255.0
+        c_g = NikkiReader.read_byte(apx) / 255.0
+        c_b = NikkiReader.read_byte(apx) / 255.0
+        c_a = NikkiReader.read_byte(apx) / 255.0
     return [c_r,c_g,c_b,c_a]
 
 def pal_rgba16(apx):
-    if big_endian == True:
-        c_a = read_uint4(apx,True) / 255.0
+    if NikkiReader._big_endian:
+        c_a = NikkiReader.read_uint4(apx,True) / 255.0
         apx.seek(-1,1)
-        c_b = read_uint4(apx) / 255.0
-        c_g = read_uint4(apx,True) / 255.0
+        c_b = NikkiReader.read_uint4(apx) / 255.0
+        c_g = NikkiReader.read_uint4(apx,True) / 255.0
         apx.seek(-1,1)
-        c_r = read_uint4(apx) / 255.0
+        c_r = NikkiReader.read_uint4(apx) / 255.0
     else:
-        c_r = read_uint4(apx) / 255.0
+        c_r = NikkiReader.read_uint4(apx) / 255.0
         apx.seek(-1,1)
-        c_g = read_uint4(apx,True) / 255.0
-        c_b = read_uint4(apx) / 255.0
+        c_g = NikkiReader.read_uint4(apx,True) / 255.0
+        c_b = NikkiReader.read_uint4(apx) / 255.0
         apx.seek(-1,1)
-        c_a = read_uint4(apx,True) / 255.0
+        c_a = NikkiReader.read_uint4(apx,True) / 255.0
     return [c_r,c_g,c_b,c_a]
 
 def apx_decode(apx, idx):
-    apx_pixelcount = read_uint32(apx)
-    pal_size = read_uint32(apx)
-    apx_bitdepth = read_uint16(apx)
-    apx_width = read_uint16(apx)
-    apx_height = read_uint16(apx)
-    apx_index = read_uint16(apx)
-    pal_bitdepth = read_uint16(apx)
-    pal_index = read_uint16(apx)
-    unk1 = read_uint32(apx)
-    unk2 = read_uint32(apx)
+    apx_pixelcount = NikkiReader.read_uint32(apx)
+    pal_size = NikkiReader.read_uint32(apx)
+    apx_bitdepth = NikkiReader.read_uint16(apx)
+    apx_width = NikkiReader.read_uint16(apx)
+    apx_height = NikkiReader.read_uint16(apx)
+    apx_index = NikkiReader.read_uint16(apx)
+    pal_bitdepth = NikkiReader.read_uint16(apx)
+    pal_index = NikkiReader.read_uint16(apx)
+    unk1 = NikkiReader.read_uint32(apx)
+    unk2 = NikkiReader.read_uint32(apx)
         
     palette_data = []
     image_data = np.zeros((apx_height,apx_width,4), dtype=np.float32)
@@ -73,19 +73,20 @@ def apx_decode(apx, idx):
     if apx_bitdepth == 8:
         for y in range(apx_height):
             for x in range(apx_width):
-                palid = read_byte(apx)
+                palid = NikkiReader.read_byte(apx)
                 color = palette_data[palid]
-                image_data[y, x] = color
+                image_data[apx_height - y - 1, x] = color  # Flip Y correctly
+
     elif apx_bitdepth == 4:
         for y in range(apx_height):
             for x in range(apx_width):
                 if x % 2 == 0:
-                    palid = read_uint4(apx)
+                    palid = NikkiReader.read_uint4(apx)
                     apx.seek(-1,1)
                 else:
-                    palid = read_uint4(apx, True)
+                    palid = NikkiReader.read_uint4(apx, True)
                 color = palette_data[palid]
-                image_data[x, y] = color
+                image_data[apx_height - y - 1, x] = color  # Flip Y correctly
     else:
         print(f"Image Bit Depth = {apx_bitdepth} at {apx.tell():8X}")
         
@@ -102,7 +103,7 @@ def parse_tex(filepath):
     file_meta = []
 
     with open(filepath, 'rb') as file:
-        file_count = read_uint32(file)
+        file_count = NikkiReader.read_uint32(file)
         '''
         if file_count >= 16777216:
             big_endian = True
@@ -111,13 +112,13 @@ def parse_tex(filepath):
         '''
         for n in range(file_count):
             # Offset and Size
-            ptr = read_uint32(file)
-            size = read_uint32(file)
+            ptr = NikkiReader.read_uint32(file)
+            size = NikkiReader.read_uint32(file)
             file_meta.append([ptr,size])
         
         for idx, subfile in enumerate(file_meta):
             apx = create_subfile(file, subfile[0], subfile[1])
-            apx_size = read_uint32(apx)
+            apx_size = NikkiReader.read_uint32(apx)
             image = apx_decode(apx, idx)
             images.append(image.name)
     return images
