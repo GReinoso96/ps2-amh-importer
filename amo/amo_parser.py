@@ -352,7 +352,7 @@ class amo_reader():
         
         return faces
     
-    def load_amo(self, file, filename):
+    def load_amo(self, file, filename, ignore_emissive=False):
         file.seek(0,2)
         file_size = file.tell()
         file.seek(0,0)
@@ -364,11 +364,11 @@ class amo_reader():
         while(file.tell() < file_size):
             self.read_block(file)
         
-        mat_names = self.create_materials(filename,self.mat_group)
+        mat_names = self.create_materials(filename,self.mat_group, ignore_emissive)
 
         self.create_meshes(filename,mat_names)
 
-    def create_materials(self, filename, material_groups):
+    def create_materials(self, filename, material_groups, ignore_emissive=False):
         mat_names = []
         for idx, amo_mat in enumerate(material_groups):
             material = bpy.data.materials.new(name=f"{filename} Material {idx}")
@@ -393,18 +393,6 @@ class amo_reader():
             diffuse_node = nodes.new(type='ShaderNodeBsdfPrincipled')
             diffuse_node.location = (500,0)
             diffuse_node.inputs['Roughness'].default_value = 1.0
-            color_emit = amo_mat.get_property('emission')
-            avg_emit = (color_emit[0] + color_emit[1] + color_emit[2]) / 3
-            if avg_emit > 0.6:
-                diffuse_node.inputs[27].default_value = avg_emit
-
-            maprange_node = nodes.new(type='ShaderNodeMapRange')
-            maprange_node.location = (300,-600)
-            maprange_node.inputs[0].default_value = avg_emit
-            maprange_node.inputs[1].default_value = 0
-            maprange_node.inputs[2].default_value = 1
-            maprange_node.inputs[3].default_value = -1
-            maprange_node.inputs[4].default_value = 1
             
             mat_texture = self.tex_group[amo_mat.get_property('texture')].get_property('tex_id')
             texture_node = nodes.new(type='ShaderNodeTexImage')
@@ -446,8 +434,19 @@ class amo_reader():
             links.new(vertcol_node.outputs['Alpha'],alphamix_node.inputs[0])
             links.new(texture_node.outputs['Alpha'],alphamix_node.inputs[1])
             links.new(alphamix_node.outputs[0],diffuse_node.inputs[4])
-            links.new(maprange_node.outputs[0],diffuse_node.inputs[27])
             links.new(diffuse_node.outputs['BSDF'],output_node.inputs['Surface'])
+            
+            if ignore_emissive == False:
+                color_emit = amo_mat.get_property('emission')
+                avg_emit = (color_emit[0] + color_emit[1] + color_emit[2]) / 3
+                maprange_node = nodes.new(type='ShaderNodeMapRange')
+                maprange_node.location = (300,-600)
+                maprange_node.inputs[0].default_value = avg_emit
+                maprange_node.inputs[1].default_value = 0
+                maprange_node.inputs[2].default_value = 1
+                maprange_node.inputs[3].default_value = -1
+                maprange_node.inputs[4].default_value = 1
+                links.new(maprange_node.outputs[0],diffuse_node.inputs[27])
         return mat_names
     
     def create_meshes(self, filename, materials):
