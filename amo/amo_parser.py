@@ -1,7 +1,5 @@
-import bpy
-import struct
-import array
-import os
+import bpy, bmesh
+import math
 
 from ..helpers.nikkireader import NikkiReader
 
@@ -29,6 +27,9 @@ class AMOReader:
         self.sub_offsets = []
         self.sub_sizes = []
         self.image_names = img_names
+        self.ignore_emissive = False
+        self.ignore_additive = False
+        self.rotate_delta = True
     
     def read_block(self, file):
         block_pos = file.tell()
@@ -50,11 +51,12 @@ class AMOReader:
             0x0A0000: 'Vertex UVs',
             0x0B0000: 'Vertex Colors',
             0x0C0000: 'Vertex Weights',
+            0x0F0000: 'Render Flag',
             0x9: 'Materials',
             0xA: 'Textures'
         }
 
-        print(f"{block_names.get(block_id, 'Unknown')} | {block_pos:8X} | {block_id:8X} | {block_count:8X} | {block_size:8X}")
+        print(f"{block_names.get(block_id, 'Unknown').rjust(16)} | {block_pos:8X} | {block_id:8X} | {block_count:8X} | {block_size:8X}")
 
         block_handlers = {
             0x20000: self.handle_header_block,
@@ -70,6 +72,7 @@ class AMOReader:
             0x0A0000: self.handle_vertex_uvs_block,
             0x0B0000: self.handle_vertex_colors_block,
             0x0C0000: self.handle_vertex_weights_block,
+            0x0F0000: self.handle_renderflag_block,
             0x9: self.handle_material_data_block,
             0xA: self.handle_texture_data_block
         }
@@ -135,7 +138,15 @@ class AMOReader:
         self.obj_group[-1].set_property('vert_uvs', vert_uvs)
     
     def handle_vertex_colors_block(self, file, count, size):
-        self.obj_group[-1].set_property('vert_cols', [NikkiReader.read_vec4(file) for _ in range(count)])
+        colors = []
+        for _ in range(count):
+            #print(f"0x{file.tell():8X}")
+            col_r = NikkiReader.map_range(NikkiReader.read_float(file), 0.0, 255.0, 0.0, 1.0)
+            col_g = NikkiReader.map_range(NikkiReader.read_float(file), 0.0, 255.0, 0.0, 1.0)
+            col_b = NikkiReader.map_range(NikkiReader.read_float(file), 0.0, 255.0, 0.0, 1.0)
+            col_a = NikkiReader.map_range(NikkiReader.read_float(file), 0.0, 255.0, 0.0, 1.0)
+            colors.append([col_r,col_g,col_b,col_a])
+        self.obj_group[-1].set_property('vert_cols', colors)
     
     def handle_vertex_weights_block(self, file, count, size):
         vert_weights = []
@@ -173,6 +184,26 @@ class AMOReader:
             tex.set_property('tex_height', NikkiReader.read_uint32(file))
             tex.set_property('unkChunk', file.read(244))
             self.tex_group.append(tex)
+    
+    def handle_renderflag_block(self, file, count, size):
+        self.obj_group[-1].set_property('render_unk1', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk2', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk3', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk4', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk5', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk6', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk7', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk8', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk9', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk10', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk11', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_alpha', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk13', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk14', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk15', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk16', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk17', NikkiReader.read_uint32(file))
+        self.obj_group[-1].set_property('render_unk18', NikkiReader.read_uint32(file))
 
     def handle_unknown_block(self, file, count, size):
         print("Unknown Block encountered. Skipping...")
@@ -352,23 +383,22 @@ class amo_reader():
         
         return faces
     
-    def load_amo(self, file, filename, ignore_emissive=False):
-        file.seek(0,2)
-        file_size = file.tell()
+    def load_amo(self, file, filename):
         file.seek(0,0)
 
         amo_header = NikkiReader.read_uint32(file)
         amo_version = NikkiReader.read_uint32(file)
         amo_size = NikkiReader.read_uint32(file)
 
-        while(file.tell() < file_size):
+        print(amo_size)
+        while(file.tell() < amo_size):
             self.read_block(file)
         
-        mat_names = self.create_materials(filename,self.mat_group, ignore_emissive)
+        mat_names = self.create_materials(filename,self.mat_group)
 
         self.create_meshes(filename,mat_names)
 
-    def create_materials(self, filename, material_groups, ignore_emissive=False):
+    def create_materials(self, filename, material_groups):
         mat_names = []
         for idx, amo_mat in enumerate(material_groups):
             material = bpy.data.materials.new(name=f"{filename} Material {idx}")
@@ -391,11 +421,13 @@ class amo_reader():
             output_node.location = (900,0)
                 
             diffuse_node = nodes.new(type='ShaderNodeBsdfPrincipled')
+            diffuse_node.name = "AMO BSDF"
             diffuse_node.location = (500,0)
             diffuse_node.inputs['Roughness'].default_value = 1.0
             
             mat_texture = self.tex_group[amo_mat.get_property('texture')].get_property('tex_id')
             texture_node = nodes.new(type='ShaderNodeTexImage')
+            texture_node.name = "AMO Texture"
             texture_node.location = (0,0)
             if self.image_names:
                 texture = bpy.data.images.get(self.image_names[mat_texture])
@@ -424,6 +456,7 @@ class amo_reader():
             rgba2_node.inputs[2].default_value = amo_mat.get_property('rgba2')[2]
             
             alphamix_node = nodes.new(type='ShaderNodeMath')
+            alphamix_node.name = "AMO Alpha Mix"
             alphamix_node.location = (300,-300)
             alphamix_node.operation = 'MULTIPLY'
             
@@ -436,7 +469,7 @@ class amo_reader():
             links.new(alphamix_node.outputs[0],diffuse_node.inputs[4])
             links.new(diffuse_node.outputs['BSDF'],output_node.inputs['Surface'])
             
-            if ignore_emissive == False:
+            if self.ignore_emissive == False:
                 color_emit = amo_mat.get_property('emission')
                 avg_emit = (color_emit[0] + color_emit[1] + color_emit[2]) / 3
                 maprange_node = nodes.new(type='ShaderNodeMapRange')
@@ -457,11 +490,27 @@ class amo_reader():
             mesh = bpy.data.meshes.new(amo_obj.name)
             obj = bpy.data.objects.new(f"{filename} {amo_obj.name}", mesh)
             col = bpy.data.collections[0]
+
+            obj.visible_shadow = False
+            obj.visible_diffuse = False
+            if self.rotate_delta:
+                obj.delta_rotation_euler[0] = math.radians(90)
             
             col.objects.link(obj)
             bpy.context.view_layer.objects.active = obj
                 
             mesh.from_pydata(amo_obj.get_property('vert_buffer'), [], faces)
+
+            bm = bmesh.new()
+            bm.from_mesh(mesh)
+
+            custom_index_layer = bm.verts.layers.int.new('custom_index')
+
+            for i, v in enumerate(bm.verts):
+                v[custom_index_layer] = i
+            
+            bm.to_mesh(mesh)
+            bm.free()
 
             # Adapted from *&'s plugin
             mesh.polygons.foreach_set("use_smooth", [True] * len(mesh.polygons))
@@ -497,8 +546,16 @@ class amo_reader():
                     vertexw_group.add([idx],weight[1],'ADD')
             
             # Tri-Strip Vertex Groups
-            for idx, strip in enumerate(all_strips):
-                strip_name = f"Strip.{str(idx).zfill(3)}"
+            for idx, strip in enumerate(amo_obj.get_property('strips')):
+                strip_name = f"Strip1.{str(idx).zfill(3)}"
+                if strip_name not in obj.vertex_groups:
+                    vertex_group = obj.vertex_groups.new(name=strip_name)
+                    weight = 1/len(strip)
+                    for vert in strip:
+                        vertex_group.add([vert], weight, 'REPLACE')
+
+            for idx, strip in enumerate(amo_obj.get_property('strips2')):
+                strip_name = f"Strip2.{str(idx).zfill(3)}"
                 if strip_name not in obj.vertex_groups:
                     vertex_group = obj.vertex_groups.new(name=strip_name)
                     weight = 1/len(strip)
@@ -513,15 +570,40 @@ class amo_reader():
                     obj.data.materials.append(mat_ref)
             
             for idx, mat_id in enumerate(amo_obj.get_property('mat_buffer')):
-                strip_name = f"Strip.{str(idx).zfill(3)}"
+                strip_name = f"Strip1.{str(idx).zfill(3)}"
                 vert_group = obj.vertex_groups.get(strip_name)
-                
-                group_index = vert_group.index
-                group_verts = [v.index for v in obj.data.vertices if group_index in [g.group for g in v.groups]]
-                
-                for poly in obj.data.polygons:
-                    if any(v in group_verts for v in poly.vertices):
-                        poly.select = True
-                        poly.material_index = mat_id
-                    else:
-                        poly.select = False
+
+                if vert_group:
+                    group_index = vert_group.index
+                    group_verts = [v.index for v in obj.data.vertices if group_index in [g.group for g in v.groups]]
+                    
+                    for poly in obj.data.polygons:
+                        if any(v in group_verts for v in poly.vertices):
+                            poly.select = True
+                            poly.material_index = mat_id
+                        else:
+                            poly.select = False
+            
+            for idx, mat_id in enumerate(amo_obj.get_property('mat_buffer')):
+                strip_name = f"Strip2.{str(idx).zfill(3)}"
+                vert_group = obj.vertex_groups.get(strip_name)
+
+                if vert_group:
+                    group_index = vert_group.index
+                    group_verts = [v.index for v in obj.data.vertices if group_index in [g.group for g in v.groups]]
+                    
+                    for poly in obj.data.polygons:
+                        if any(v in group_verts for v in poly.vertices):
+                            poly.select = True
+                            poly.material_index = mat_id
+                        else:
+                            poly.select = False
+            
+            print(amo_obj.get_property('render_alpha'))
+
+            if self.ignore_additive == False and amo_obj.get_property('render_alpha') == 2:
+                for material in obj.data.materials:
+                    texNode = material.node_tree.nodes.get("AMO Texture")
+                    mixNode = material.node_tree.nodes.get("AMO Alpha Mix")
+
+                    material.node_tree.links.new(texNode.outputs['Color'],mixNode.inputs[1])

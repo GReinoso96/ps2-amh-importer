@@ -26,8 +26,11 @@ class import_amh(Operator, ImportHelper):
     texture_path: StringProperty(name="Texture Path", description="Leave empty to attempt to load from _tex file", default="")
     big_endian: BoolProperty(name="MHG Wii Format", description="Attempt to load data in Big Endian mode.", default=False)
     ignore_emissive: BoolProperty(name="Ignore Emissive", description="Ignore the emissive value, tick this for stages.", default=False)
+    ignore_additive: BoolProperty(name="Ignore Additive Alpha", description="Do not handle additive alpha materials.", default=False)
+    rotate_delta: BoolProperty(name="Delta Rotation", description="Rotate model for Z-up.", default=True)
 
-    file_meta = []
+    def __init__(self):
+        self.file_meta = []
 
     def execute(self, context):
         NikkiReader.set_endian(self.big_endian)
@@ -57,10 +60,12 @@ class import_amh(Operator, ImportHelper):
                     size = NikkiReader.read_uint32(file)
                     self.file_meta.append([ptr,size])
                 
-                file = NikkiReader.create_subfile(file, self.file_meta[0][0], self.file_meta[0][1])
-                
+                subfile = NikkiReader.create_subfile(file, self.file_meta[0][0], self.file_meta[0][1])
                 amo_parser = AMOReader(tex_list)
-                amo_parser.load_amo(file, os.path.basename(self.filepath), ignore_emissive=self.ignore_emissive)
+                amo_parser.rotate_delta = self.rotate_delta
+                amo_parser.ignore_additive = self.ignore_additive
+                amo_parser.ignore_emissive = self.ignore_emissive
+                amo_parser.load_amo(subfile, os.path.basename(self.filepath))
 
             return { "FINISHED" }
         except Exception as ex:
@@ -80,6 +85,8 @@ class import_amo(Operator, ImportHelper):
     load_textures: BoolProperty(name="Load Textures", description="Attempt to load textures from a _tex file or a folder.", default=False)
     texture_path: StringProperty(name="Texture Path", description="Leave empty to attempt to load from _tex file", default="")
     ignore_emissive: BoolProperty(name="Ignore Emissive", description="Ignore the emissive value, tick this for stages.", default=False)
+    ignore_additive: BoolProperty(name="Ignore Additive Alpha", description="Do not handle additive alpha materials.", default=False)
+    rotate_delta: BoolProperty(name="Delta Rotation", description="Rotate model for Z-up.", default=True)
 
     file_meta = []
 
@@ -103,7 +110,10 @@ class import_amo(Operator, ImportHelper):
             
             with open(self.filepath, 'rb') as file:
                 amo_parser = AMOReader(tex_list)
-                amo_parser.load_amo(file, os.path.basename(self.filepath),ignore_emissive=self.ignore_emissive)
+                amo_parser.rotate_delta = self.rotate_delta
+                amo_parser.ignore_additive = self.ignore_additive
+                amo_parser.ignore_emissive = self.ignore_emissive
+                amo_parser.load_amo(file, os.path.basename(self.filepath))
 
             return { "FINISHED" }
         except Exception as ex:
