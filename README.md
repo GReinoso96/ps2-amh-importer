@@ -7,11 +7,21 @@ Note: this importer is highly experimental and in dire need of a full rewrite.
 # Features
 
 * Model Import (_amh.bin files)
+    * Vertex Color Import
+    * Material Import
+    * Weights Import
+    * UV Import
 * Texture Import
     * For MH1 and MHG, you can leave the texture path empty to attempt to autoload from a _tex.bin file.
-    * For MH1, MHG and MH2, you can specify a folder with PNG textures instead.
+    * For MH1, MHG, MH2 and Frontier, you can specify a folder with PNG textures instead.
 
 # Usage
+
+## Installation
+
+Click [Here](https://github.com/GReinoso96/ps2-amh-importer/archive/refs/heads/main.zip) and download the file.
+
+In Blender, go to `Edit->Preferences->Addons->Install...` and install the file you just downloaded.
 
 ## General notes
 
@@ -53,7 +63,7 @@ After this, when you go inside the folder you'll only see 2 files, copy the firs
 
 `afspacker -e [filename] assets assets.txt`
 
-Replace `filename` with the name of the file you just copied.
+Replace `[filename]` with the name of the file you just copied (remove the [] brackets).
 
 Inside this new assets folder you'll find the model files.
 
