@@ -29,7 +29,7 @@ Copy the file named "AFS_DATA.AFS" into the folder containing AFS Packer and PZZ
 
 Run the following command
 
-'''afspacker -e AFS_DATA.AFS data data.txt'''
+`afspacker -e AFS_DATA.AFS data data.txt`
 
 When it is finished, you'll see a new folder named "data", inside you'll find all of the game's assets.
 
@@ -39,7 +39,7 @@ For models, you want the files that end in _amh.bin, and for textures, the ones 
 
 Copy all the _amh files and their corresponding _tex files to a new folder named "models" outside of the "data" folder, then run the next command in the command line used previously:
 
-'''for %i in (models\*.bin) do pzzcomp_jojo -d %i %i'''
+`for %i in (models\*.bin) do pzzcomp_jojo -d %i %i`
 
 After this is done, all model files will have been decompressed and are now ready for use with the plugin.
 
@@ -47,13 +47,13 @@ After this is done, all model files will have been decompressed and are now read
 
 Follow the same procedure, except the data file is named DATA.BIN instead of AFS_DATA.AFS.
 
-'''afspacker -e DATA.BIN data data.txt'''
+`afspacker -e DATA.BIN data data.txt`
 
 After this, when you go inside the folder you'll only see 2 files, copy the first one to the prevous folder and run:
 
-'''afspacker -e [filename] assets assets.txt'''
+`afspacker -e [filename] assets assets.txt`
 
-Replace **filename** with the name of the file you just copied.
+Replace `filename` with the name of the file you just copied.
 
 Inside this new assets folder you'll find the model files.
 
